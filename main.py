@@ -351,6 +351,15 @@ def parse_summary(summary_content, report_type='full'):
             data['Alt'].append(current.get('alt', ''))
             data['Title'].append(current.get('title', ''))
             data['Размер'].append(current.get('size', ''))
+        
+        # Проверяем, что есть данные для экспорта
+        if not data['Ссылка']:
+            # Если данных нет, создаем базовую структуру
+            data['Ссылка'] = ['Нет данных']
+            data['Alt'] = ['-']
+            data['Title'] = ['-']
+            data['Размер'] = ['-']
+        
         return data
     elif report_type == 'parser':
         data = {'Ссылка': [], 'Результат': [], 'Статус': []}
@@ -366,6 +375,14 @@ def parse_summary(summary_content, report_type='full'):
                     data['Ссылка'].append(url)
                     data['Результат'].append(emoji)
                     data['Статус'].append(status)
+        
+        # Проверяем, что есть данные для экспорта
+        if not data['Ссылка']:
+            # Если данных нет, создаем базовую структуру
+            data['Ссылка'] = ['Нет данных']
+            data['Результат'] = ['-']
+            data['Статус'] = ['Нет данных']
+        
         return data
     else:
         sections = {'Хорошее': [], 'Проблемы': [], 'Рекомендации': []}
@@ -385,14 +402,43 @@ def parse_summary(summary_content, report_type='full'):
                 if current_section:
                     sections[current_section].append(line[2:].strip())
         max_len = max(len(sections[s]) for s in sections)
-        for s in sections:
-            sections[s] += [''] * (max_len - len(sections[s]))
+        if max_len > 0:  # Проверяем, что есть данные для обработки
+            for s in sections:
+                sections[s] += [''] * (max_len - len(sections[s]))
+        else:
+            # Если все списки пустые, создаем базовую структуру
+            for s in sections:
+                sections[s] = ['']
         return sections
 
 def save_results(site_url, log_content, summary_content, report_type='full', format='excel'):
     """Сохраняет результаты в Excel."""
     report_path = f"{REPORT_DIR}/{report_type}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     sections = parse_summary(summary_content, report_type)
+    
+    # Проверяем, что есть данные для сохранения
+    if not sections or all(len(v) == 0 for v in sections.values()):
+        # Создаем базовую структуру с сообщением об отсутствии данных
+        if report_type == 'parser':
+            sections = {
+                'Ссылка': ['Нет данных для экспорта'],
+                'Результат': ['-'],
+                'Статус': ['Проверьте настройки парсера']
+            }
+        elif report_type == 'images':
+            sections = {
+                'Ссылка': ['Нет данных для экспорта'],
+                'Alt': ['-'],
+                'Title': ['-'],
+                'Размер': ['-']
+            }
+        else:
+            sections = {
+                'Хорошее': ['Нет данных для экспорта'],
+                'Проблемы': ['Проверьте настройки анализа'],
+                'Рекомендации': ['Запустите анализ заново']
+            }
+    
     df = pd.DataFrame(sections)
     df.to_excel(report_path, index=False)
     return report_path
@@ -1372,7 +1418,7 @@ def format_summary_section(positives, errors, recommendations, title):
 
 def format_links_section(link_statuses):
     """Форматирует список ссылок с статусами и красивыми индикаторами."""
-    output = "### Ссылки\n\n"
+    output = f"### Ссылки ({len(link_statuses)} проверенных)\n\n"
     for url, status in link_statuses.items():
         if isinstance(status, int):
             if status == 200:
@@ -1446,7 +1492,7 @@ def check_links_summary(link_statuses):
         else:
             categories["⚪ Other/Errors"].append(url)
 
-    summary = "### 📊 Сводка Ссылок\n\n"
+    summary = f"### 📊 Сводка Ссылок ({len(link_statuses)} проверенных)\n\n"
     for cat, urls in categories.items():
         if urls:
             summary += f"**{cat}** ({len(urls)} ссылок):\n"
@@ -2038,7 +2084,12 @@ def run_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_
                     for tkw, data in target_analysis.items():
                         log_text += f"🎯 ЦЕЛЕВОЕ КЛЮЧЕВОЕ СЛОВО: '{tkw}'\n"
                         log_text += f"📊 ОБЩАЯ ЧАСТОТА (со склонениями): {data['freq']} раз\n"
-                        log_text += f"📈 ПЛОТНОСТЬ: {data['density']:.2%}\n"
+                        # Безопасное форматирование плотности
+                        density_value = data['density']
+                        if isinstance(density_value, (int, float)):
+                            log_text += f"📈 ПЛОТНОСТЬ: {density_value:.2%}\n"
+                        else:
+                            log_text += f"📈 ПЛОТНОСТЬ: {density_value}\n"
                         
                         # Показываем найденные склонения
                         if 'declensions_found' in data and data['declensions_found']:
@@ -2071,14 +2122,17 @@ def run_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_
                         log_text += "=" * 60 + "\n\n"
                         
                         # Оценка плотности
-                        if data['density'] < 0.01:
-                            seo_errors.append(f"Низкая плотность для целевого '{tkw}' ({data['density']:.2%})")
-                            seo_recs.append(f"Увеличьте использование '{tkw}' до 1-2%.")
-                        elif data['density'] > 0.03:
-                            seo_errors.append(f"Высокая плотность для целевого '{tkw}' ({data['density']:.2%})")
-                            seo_recs.append(f"Снизьте использование '{tkw}' до 1-2%.")
+                        if isinstance(density_value, (int, float)):
+                            if density_value < 0.01:
+                                seo_errors.append(f"Низкая плотность для целевого '{tkw}' ({density_value:.2%})")
+                                seo_recs.append(f"Увеличьте использование '{tkw}' до 1-2%.")
+                            elif density_value > 0.03:
+                                seo_errors.append(f"Высокая плотность для целевого '{tkw}' ({density_value:.2%})")
+                                seo_recs.append(f"Снизьте использование '{tkw}' до 1-2%.")
+                            else:
+                                seo_positives.append(f"Нормальная плотность для целевого '{tkw}' ({density_value:.2%})")
                         else:
-                            seo_positives.append(f"Нормальная плотность для целевого '{tkw}' ({data['density']:.2%})")
+                            seo_errors.append(f"Ошибка расчета плотности для '{tkw}': {density_value}")
                 else:
                     log_text += "❌ Целевые ключевые слова не найдены на странице\n"
                     seo_errors.append("Целевые ключевые слова не найдены")
@@ -2224,7 +2278,7 @@ def run_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_
 
 
 
-def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_bar: ft.ProgressBar, ignore_ssl: bool, target_keywords: str, max_links: int = 10):
+def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_bar: ft.ProgressBar, ignore_ssl: bool, target_keywords: str, max_links: int = 1000):
     """Запускает тестирование ссылок без проверки robots и sitemap."""
     if not re.match(r'^https?://', site_url):
         summary_area.value = "❌ Неверный URL\n"
@@ -2706,7 +2760,12 @@ def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, pro
                     for tkw, data in target_analysis.items():
                         log_text += f"🎯 ЦЕЛЕВОЕ КЛЮЧЕВОЕ СЛОВО: '{tkw}'\n"
                         log_text += f"📊 ОБЩАЯ ЧАСТОТА (со склонениями): {data['freq']} раз\n"
-                        log_text += f"📈 ПЛОТНОСТЬ: {data['density']:.2%}\n"
+                        # Безопасное форматирование плотности
+                        density_value = data['density']
+                        if isinstance(density_value, (int, float)):
+                            log_text += f"📈 ПЛОТНОСТЬ: {density_value:.2%}\n"
+                        else:
+                            log_text += f"📈 ПЛОТНОСТЬ: {density_value}\n"
                         
                         # Показываем найденные склонения
                         if 'declensions_found' in data and data['declensions_found']:
@@ -2738,14 +2797,17 @@ def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, pro
                         log_text += "=" * 60 + "\n\n"
                         
                         # Оценка плотности
-                        if data['density'] < 0.01:
-                            seo_errors.append(f"Низкая плотность для целевого '{tkw}' ({data['density']:.2%})")
-                            seo_recs.append(f"Увеличьте использование '{tkw}' до 1-2%.")
-                        elif data['density'] > 0.03:
-                            seo_errors.append(f"Высокая плотность для целевого '{tkw}' ({data['density']:.2%})")
-                            seo_recs.append(f"Снизьте использование '{tkw}' до 1-2%.")
+                        if isinstance(density_value, (int, float)):
+                            if density_value < 0.01:
+                                seo_errors.append(f"Низкая плотность для целевого '{tkw}' ({density_value:.2%})")
+                                seo_recs.append(f"Увеличьте использование '{tkw}' до 1-2%.")
+                            elif density_value > 0.03:
+                                seo_errors.append(f"Высокая плотность для целевого '{tkw}' ({density_value:.2%})")
+                                seo_recs.append(f"Снизьте использование '{tkw}' до 1-2%.")
+                            else:
+                                seo_positives.append(f"Нормальная плотность для целевого '{tkw}' ({density_value:.2%})")
                         else:
-                            seo_positives.append(f"Нормальная плотность для целевого '{tkw}' ({data['density']:.2%})")
+                            seo_errors.append(f"Ошибка расчета плотности для '{tkw}': {density_value}")
                 else:
                     log_text += "❌ Целевые ключевые слова не найдены на странице\n"
                     seo_errors.append("Целевые ключевые слова не найдены")
@@ -2757,12 +2819,11 @@ def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, pro
         # Проверка ссылок (битые) и сбор статусов
         try:
             links = driver.find_elements(By.TAG_NAME, "a")
-            log_text += f"🔗 Ссылок: {len(links)}\n"
-            general_positives.append(f"Ссылок: {len(links)}")
-            site_links = [link.get_attribute("href") for link in links if link.get_attribute("href") and site_url in link.get_attribute("href")]
+            log_text += f"🔗 Найдено тегов <a>: {len(links)}\n"
             
-            # Ограничиваем количество проверяемых ссылок
-            links_to_check = links[:max_links] if max_links > 0 else links
+            # Проверяем все найденные ссылки
+            links_to_check = links
+            checked_links_count = 0
             
             for i, link in enumerate(links_to_check, 1):
                 href = link.get_attribute("href") or "Нет href"
@@ -2770,8 +2831,14 @@ def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, pro
                     result = check_resource(href, ignore_ssl)
                     href, status, _, _ = result
                     link_statuses[href] = status
+                    checked_links_count += 1
                     if not isinstance(status, int) or status != 200:
                         broken_links.append(href)
+            
+            # Добавляем информацию о проверенных ссылках
+            log_text += f"🔗 Проверено ссылок: {checked_links_count}\n"
+            general_positives.append(f"Проверено ссылок: {checked_links_count}")
+            site_links = [link.get_attribute("href") for link in links if link.get_attribute("href") and site_url in link.get_attribute("href")]
         except Exception as e:
             log_to_file(f"Ошибка проверки ссылок: {str(e)}")
             general_errors.append("Не удалось проверить ссылки")
@@ -2811,11 +2878,11 @@ def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, pro
             links_summary_with_buttons += f"   [Детали] - кнопка для просмотра деталей\n\n"
         
         # Создаем сводку ссылок с информацией о деталях
-        links_summary_simple = "### Ссылки\n\n"
+        links_summary_simple = f"### Ссылки ({len(link_statuses)} проверенных)\n\n"
         for url, status in link_statuses.items():
             status_emoji = "🟢" if isinstance(status, int) and status == 200 else "🔴"
             links_summary_simple += f"{status_emoji} {url} (Статус: {status})\n"
-        links_summary_simple += "\n💡 Для просмотра детальной информации о ссылках используйте кнопку 'Ссылки' выше."
+        links_summary_simple += f"\n💡 Проверено {len(link_statuses)} ссылок из {len(links)} найденных тегов <a>"
         
         # Сохраняем данные ссылок для детального просмотра
         page.data['link_statuses'] = link_statuses
@@ -2866,6 +2933,12 @@ def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, pro
         # Скрываем кнопку остановки и показываем кнопку запуска
         page.data['links_stop_btn_visible'] = False
         page.data['links_run_btn_visible'] = True
+        
+        # Показываем кнопки экспорта через page.data
+        page.data['links_export_btn_visible'] = True
+        page.data['links_export_word_btn_visible'] = True
+        
+        # Обновляем интерфейс
         page.update()
 
 def run_multiple_links_test(urls: list, summary_area: ft.TextField, page: ft.Page, progress_bar: ft.ProgressBar, ignore_ssl: bool, target_keywords: str):
@@ -2901,7 +2974,7 @@ def run_multiple_links_test(urls: list, summary_area: ft.TextField, page: ft.Pag
             temp_summary = ft.TextField()
             
             # Запускаем проверку одной ссылки
-            run_links_test(url, temp_summary, page, progress_bar, ignore_ssl, target_keywords, 10)
+            run_links_test(url, temp_summary, page, progress_bar, ignore_ssl, target_keywords, 1000)
             
             # Сохраняем результаты
             if hasattr(temp_summary, 'value') and temp_summary.value:
@@ -2948,6 +3021,12 @@ def run_multiple_links_test(urls: list, summary_area: ft.TextField, page: ft.Pag
     summary_area.value = combined_summary
     page.data['multiple_results'] = all_results
     progress_bar.value = 1.0
+    
+    # Показываем кнопки экспорта через page.data
+    page.data['links_export_btn_visible'] = True
+    page.data['links_export_word_btn_visible'] = True
+    
+    # Обновляем интерфейс
     page.update()
 
 def run_robots_check(site_url: str, ignore_ssl: bool, page: ft.Page, robots_area: ft.TextField, summary_area: ft.TextField):
@@ -3195,41 +3274,54 @@ def generate_word_report(data, site_url, report_type='parser'):
     doc.add_paragraph(f"Тип отчета: {report_type}")
     doc.add_paragraph("="*50)
     
-    if report_type == 'parser' and isinstance(data, list):
-        # Отчет парсера
-        doc.add_heading('Результаты парсинга сайта', level=1)
-        doc.add_paragraph(f"Найдено страниц: {len(data)}")
-        doc.add_paragraph()
-        
-        for i, item in enumerate(data, 1):
-            # Заголовок страницы
-            doc.add_heading(f'Страница {i}: {item["Ссылка"]}', level=2)
+    if report_type == 'parser':
+        if isinstance(data, list):
+            # Отчет парсера
+            doc.add_heading('Результаты парсинга сайта', level=1)
             
-            # Таблица с информацией
-            table = doc.add_table(rows=1, cols=2)
-            table.style = 'Table Grid'
+            # Проверяем, что есть данные
+            if not data:
+                doc.add_paragraph("Нет данных для экспорта. Проверьте настройки парсера.")
+                doc.save(report_path)
+                return report_path
             
-            # Заголовки таблицы
-            hdr_cells = table.rows[0].cells
-            hdr_cells[0].text = 'Параметр'
-            hdr_cells[1].text = 'Значение'
+            doc.add_paragraph(f"Найдено страниц: {len(data)}")
+            doc.add_paragraph()
             
-            # Данные
-            data_rows = [
-                ('HTTP Статус', str(item['HTTP'])),
-                ('Редирект', item['Редирект'] if item['Редирект'] else 'Нет'),
-                ('SEO Статус', item['SEO']),
-                ('Title', item['Title'] if item['Title'] else 'Отсутствует'),
-                ('Meta Description', item['Meta_Description'] if item['Meta_Description'] else 'Отсутствует'),
-                ('H1', item['H1'] if item['H1'] else 'Отсутствует'),
-            ]
-            
-            for param, value in data_rows:
-                row_cells = table.add_row().cells
-                row_cells[0].text = param
-                row_cells[1].text = value
-            
-            doc.add_paragraph()  # Пустая строка между страницами
+            for i, item in enumerate(data, 1):
+                # Заголовок страницы
+                doc.add_heading(f'Страница {i}: {item["Ссылка"]}', level=2)
+                
+                # Таблица с информацией
+                table = doc.add_table(rows=1, cols=2)
+                table.style = 'Table Grid'
+                
+                # Заголовки таблицы
+                hdr_cells = table.rows[0].cells
+                hdr_cells[0].text = 'Параметр'
+                hdr_cells[1].text = 'Значение'
+                
+                # Данные
+                data_rows = [
+                    ('HTTP Статус', str(item['HTTP'])),
+                    ('Редирект', item['Редирект'] if item['Редирект'] else 'Нет'),
+                    ('SEO Статус', item['SEO']),
+                    ('Title', item['Title'] if item['Title'] else 'Отсутствует'),
+                    ('Meta Description', item['Meta_Description'] if item['Meta_Description'] else 'Отсутствует'),
+                    ('H1', item['H1'] if item['H1'] else 'Отсутствует'),
+                ]
+                
+                for param, value in data_rows:
+                    row_cells = table.add_row().cells
+                    row_cells[0].text = param
+                    row_cells[1].text = value
+                
+                doc.add_paragraph()  # Пустая строка между страницами
+        else:
+            # Если данные приходят в виде строки (summary_content)
+            doc.add_heading('Результаты парсинга сайта', level=1)
+            doc.add_paragraph("Данные в текстовом формате:")
+            doc.add_paragraph(data)
     else:
         # Текстовый отчет (для других типов)
         doc.add_heading('SEO Анализ', level=1)
@@ -4310,6 +4402,8 @@ def main(page: ft.Page):
     
     def nav_links_check(e):
         switch_page(1)
+        # Обновляем видимость кнопок экспорта при переключении на вкладку
+        update_links_export_buttons()
     
     def nav_parser(e):
         switch_page(2)
@@ -4487,6 +4581,8 @@ def main(page: ft.Page):
                 progress_bar.value = 0.0
         elif idx == 1:
             links_check_content.visible = True
+            # Обновляем видимость кнопок экспорта при переключении на вкладку проверки ссылок
+            update_links_export_buttons()
         elif idx == 2:
             parser_content.visible = True
             parser_status.value = "Нажмите 'Запустить парсер', чтобы начать обход сайта"
@@ -4679,21 +4775,10 @@ def main(page: ft.Page):
     )
 
     # --- Страница проверки ссылок ---
-    links_url_input = ft.TextField(
-        label="URL сайта", 
-        width=400, 
-        filled=True, 
-        border_radius=10,
-        bgcolor="#F2F2F2",
-        border_color="#394459",
-        focused_border_color="#F2E307",
-        color="#394459",
-        label_style=ft.TextStyle(color="#394459")
-    )
     links_ssl_checkbox = ft.Checkbox(label="Игнорировать SSL", value=True)
     links_multiple_input = ft.TextField(
-        label="Множественные ссылки (по одной на строку)", 
-        width=600, 
+        label="Ссылки для проверки (по одной на строку)", 
+        width=800, 
         filled=True, 
         border_radius=10,
         bgcolor="#F2F2F2",
@@ -4702,9 +4787,9 @@ def main(page: ft.Page):
         color="#394459",
         label_style=ft.TextStyle(color="#394459"),
         multiline=True,
-        min_lines=3,
-        max_lines=8,
-        hint_text="https://example.com\nhttps://example.com/page1\nhttps://example.com/page2"
+        min_lines=5,
+        max_lines=12,
+        hint_text="https://example.com\nhttps://example.com/page1\nhttps://example.com/page2\n\nВведите ссылки для проверки (по одной на строку)"
     )
     links_run_btn = ft.ElevatedButton(
         "Запустить проверку ссылок", 
@@ -4833,9 +4918,8 @@ def main(page: ft.Page):
 
     links_check_content.content = ft.Column([
         ft.Text("🔗 Проверка ссылок", size=24, weight=ft.FontWeight.BOLD),
-        ft.Text("Проверка ссылок без robots и sitemap. Введите одну ссылку или несколько ссылок для проверки.", size=16),
-        ft.Row([links_url_input, links_ssl_checkbox, links_run_btn, links_stop_btn], spacing=10),
-        ft.Text("ИЛИ введите несколько ссылок (по одной на строку):", size=14, weight=ft.FontWeight.BOLD),
+        ft.Text("Проверка ссылок без robots и sitemap. Введите ссылки для проверки (по одной на строку).", size=16),
+        ft.Row([links_ssl_checkbox, links_run_btn, links_stop_btn], spacing=10),
         links_multiple_input,
         links_progress_bar,
         ft.Row([links_seo_btn, links_links_btn, links_images_btn, links_full_btn, links_clear_btn], spacing=10),
@@ -5025,10 +5109,10 @@ def main(page: ft.Page):
         else:
             summary = page.data.get('seo_summary', 'Нет данных по SEO')
         links_summary_area.value = summary
-        links_export_btn.visible = True
-        links_export_word_btn.visible = True
+        page.data['links_export_btn_visible'] = True
+        page.data['links_export_word_btn_visible'] = True
         links_export_btn.data = ('seo', summary)
-        page.update()
+        update_links_export_buttons()
     links_seo_btn.on_click = links_show_seo
 
     def links_show_links(e):
@@ -5072,10 +5156,10 @@ def main(page: ft.Page):
                 detailed_summary = "Нет данных по ссылкам"
         
         links_summary_area.value = detailed_summary
-        links_export_btn.visible = True
-        links_export_word_btn.visible = True
+        page.data['links_export_btn_visible'] = True
+        page.data['links_export_word_btn_visible'] = True
         links_export_btn.data = ('links', detailed_summary)
-        page.update()
+        update_links_export_buttons()
     links_links_btn.on_click = links_show_links
 
     def links_show_images(e):
@@ -5085,10 +5169,10 @@ def main(page: ft.Page):
         else:
             summary = page.data.get('images_summary', 'Нет данных по изображениям')
         links_summary_area.value = summary
-        links_export_btn.visible = True
-        links_export_word_btn.visible = True
+        page.data['links_export_btn_visible'] = True
+        page.data['links_export_word_btn_visible'] = True
         links_export_btn.data = ('images', summary)
-        page.update()
+        update_links_export_buttons()
     links_images_btn.on_click = links_show_images
 
     def links_show_full(e):
@@ -5098,10 +5182,10 @@ def main(page: ft.Page):
         else:
             summary = page.data.get('full_summary', 'Нет общей сводки')
         links_summary_area.value = summary
-        links_export_btn.visible = True
-        links_export_word_btn.visible = True
+        page.data['links_export_btn_visible'] = True
+        page.data['links_export_word_btn_visible'] = True
         links_export_btn.data = ('full', summary)
-        page.update()
+        update_links_export_buttons()
     links_full_btn.on_click = links_show_full
 
     def links_clear_summary(e):
@@ -5112,14 +5196,18 @@ def main(page: ft.Page):
         links_summary_area.value = ""
         
         # Скрываем кнопки экспорта
-        links_export_btn.visible = False
-        links_export_word_btn.visible = False
+        page.data['links_export_btn_visible'] = False
+        page.data['links_export_word_btn_visible'] = False
+        
+        # Скрываем кнопку остановки и показываем кнопку запуска
+        links_stop_btn.visible = False
+        links_run_btn.visible = True
         
         # Сбрасываем прогресс-бар
         links_progress_bar.value = 0.0
         
         # Обновляем интерфейс
-        page.update()
+        update_links_export_buttons()
         
         # Показываем уведомление
         page.snack_bar = ft.SnackBar(content=ft.Text("Сводка очищена"))
@@ -5136,8 +5224,15 @@ def main(page: ft.Page):
         else:
             report_type, summary = 'full', links_summary_area.value
         
+        # Проверяем, что есть данные для экспорта
+        if not summary or summary.strip() == '':
+            page.snack_bar = ft.SnackBar(content=ft.Text("❌ Нет данных для экспорта. Сначала запустите анализ."))
+            page.snack_bar.open = True
+            page.update()
+            return
+        
         try:
-            report_path = generate_report(summary, links_url_input.value.strip(), report_type=report_type)
+            report_path = generate_report(summary, "multiple_links", report_type=report_type)
             if report_path:
                 page.snack_bar = ft.SnackBar(content=ft.Text(f"✅ Отчет сохранен: {os.path.basename(report_path)}"))
                 page.snack_bar.open = True
@@ -5160,8 +5255,15 @@ def main(page: ft.Page):
         else:
             report_type, summary = 'full', links_summary_area.value
         
+        # Проверяем, что есть данные для экспорта
+        if not summary or summary.strip() == '':
+            page.snack_bar = ft.SnackBar(content=ft.Text("❌ Нет данных для экспорта. Сначала запустите анализ."))
+            page.snack_bar.open = True
+            page.update()
+            return
+        
         try:
-            report_path = generate_word_report(summary, links_url_input.value.strip(), report_type=report_type)
+            report_path = generate_word_report(summary, "multiple_links", report_type=report_type)
             if report_path:
                 page.snack_bar = ft.SnackBar(content=ft.Text(f"✅ Отчет сохранен: {os.path.basename(report_path)}"))
                 page.snack_bar.open = True
@@ -5349,9 +5451,22 @@ def main(page: ft.Page):
         page.update()
     stop_btn.on_click = stop_main_test
 
+    def update_links_export_buttons():
+        """Обновляет видимость кнопок экспорта на основе флагов в page.data."""
+        if page.data.get('links_export_btn_visible', False):
+            links_export_btn.visible = True
+        else:
+            links_export_btn.visible = False
+            
+        if page.data.get('links_export_word_btn_visible', False):
+            links_export_word_btn.visible = True
+        else:
+            links_export_word_btn.visible = False
+        
+        page.update()
+
     def run_links_test_handler(e):
         """Запускает проверку ссылок."""
-        site_url = links_url_input.value.strip()
         multiple_urls_text = links_multiple_input.value.strip()
         
         # Показываем кнопку остановки и скрываем кнопку запуска
@@ -5362,20 +5477,20 @@ def main(page: ft.Page):
         # Создаем событие для остановки
         page.data['stop_event'] = threading.Event()
         
-        # Проверяем, есть ли множественные ссылки
+        # Проверяем, есть ли ссылки для проверки
         if multiple_urls_text:
             urls = [url.strip() for url in multiple_urls_text.split('\n') if url.strip()]
             if not urls:
-                page.snack_bar = ft.SnackBar(content=ft.Text("❌ Введите ссылки в поле множественных ссылок"))
+                page.snack_bar = ft.SnackBar(content=ft.Text("❌ Введите ссылки для проверки"))
                 page.snack_bar.open = True
                 page.update()
                 return
             
             links_progress_bar.value = 0.0
             links_summary_area.value = f"🔄 Запуск проверки {len(urls)} ссылок..."
-            links_export_btn.visible = False
-            links_export_word_btn.visible = False
-            page.update()
+            page.data['links_export_btn_visible'] = False
+            page.data['links_export_word_btn_visible'] = False
+            update_links_export_buttons()
             
             # Запуск проверки множественных ссылок в отдельном потоке
             threading.Thread(
@@ -5383,22 +5498,8 @@ def main(page: ft.Page):
                 args=(urls, links_summary_area, page, links_progress_bar, links_ssl_checkbox.value, ""),
                 daemon=True
             ).start()
-            
-        elif site_url:
-            links_progress_bar.value = 0.0
-            links_summary_area.value = "🔄 Запуск проверки ссылок..."
-            links_export_btn.visible = False
-            links_export_word_btn.visible = False
-            page.update()
-            
-            # Запуск теста одной ссылки в отдельном потоке
-            threading.Thread(
-                target=run_links_test,
-                args=(site_url, links_summary_area, page, links_progress_bar, links_ssl_checkbox.value, "", 10),
-                daemon=True
-            ).start()
         else:
-            page.snack_bar = ft.SnackBar(content=ft.Text("❌ Введите URL сайта или несколько ссылок"))
+            page.snack_bar = ft.SnackBar(content=ft.Text("❌ Введите ссылки для проверки"))
             page.snack_bar.open = True
             page.update()
             return
@@ -5412,7 +5513,11 @@ def main(page: ft.Page):
         # Скрываем кнопку остановки и показываем кнопку запуска
         links_stop_btn.visible = False
         links_run_btn.visible = True
-        page.update()
+        
+        # Скрываем кнопки экспорта
+        page.data['links_export_btn_visible'] = False
+        page.data['links_export_word_btn_visible'] = False
+        update_links_export_buttons()
         
         # Показываем уведомление
         page.snack_bar = ft.SnackBar(content=ft.Text("Проверка ссылок остановлена"))
@@ -6315,35 +6420,45 @@ def main(page: ft.Page):
                 keywords_text += "-" * 40 + "\n"
                 for i, (word, density) in enumerate(sorted_keywords[:20], 1):
                     count = next((count for w, count in analysis['top_keywords'] if w == word), 0)
-                    # Добавляем цветовую индикацию плотности
-                    if density > 3.0:
-                        indicator = "🔴"  # Очень высокая плотность
-                    elif density > 2.0:
-                        indicator = "🟡"  # Высокая плотность
-                    elif density > 1.0:
-                        indicator = "🟢"  # Нормальная плотность
+                    # Безопасное форматирование плотности
+                    if isinstance(density, (int, float)):
+                        # Добавляем цветовую индикацию плотности
+                        if density > 3.0:
+                            indicator = "🔴"  # Очень высокая плотность
+                        elif density > 2.0:
+                            indicator = "🟡"  # Высокая плотность
+                        elif density > 1.0:
+                            indicator = "🟢"  # Нормальная плотность
+                        else:
+                            indicator = "⚪"  # Низкая плотность
+                        
+                        keywords_text += f"{i:2d}. {indicator} {word}\n"
+                        keywords_text += f"    Частота: {count} раз | Плотность: {density:.2f}%\n\n"
                     else:
-                        indicator = "⚪"  # Низкая плотность
-                    
-                    keywords_text += f"{i:2d}. {indicator} {word}\n"
-                    keywords_text += f"    Частота: {count} раз | Плотность: {density:.2f}%\n\n"
+                        keywords_text += f"{i:2d}. ⚪ {word}\n"
+                        keywords_text += f"    Частота: {count} раз | Плотность: {density}\n\n"
                 
                 keywords_text += "\n📈 ПО ЧАСТОТЕ (от частой к редкой):\n"
                 keywords_text += "-" * 40 + "\n"
                 for i, (word, count) in enumerate(analysis['top_keywords'], 1):
                     density = analysis['keyword_density'].get(word, 0)
-                    # Добавляем цветовую индикацию плотности
-                    if density > 3.0:
-                        indicator = "🔴"  # Очень высокая плотность
-                    elif density > 2.0:
-                        indicator = "🟡"  # Высокая плотность
-                    elif density > 1.0:
-                        indicator = "🟢"  # Нормальная плотность
+                    # Безопасное форматирование плотности
+                    if isinstance(density, (int, float)):
+                        # Добавляем цветовую индикацию плотности
+                        if density > 3.0:
+                            indicator = "🔴"  # Очень высокая плотность
+                        elif density > 2.0:
+                            indicator = "🟡"  # Высокая плотность
+                        elif density > 1.0:
+                            indicator = "🟢"  # Нормальная плотность
+                        else:
+                            indicator = "⚪"  # Низкая плотность
+                        
+                        keywords_text += f"{i:2d}. {indicator} {word}\n"
+                        keywords_text += f"    Частота: {count} раз | Плотность: {density:.2f}%\n\n"
                     else:
-                        indicator = "⚪"  # Низкая плотность
-                    
-                    keywords_text += f"{i:2d}. {indicator} {word}\n"
-                    keywords_text += f"    Частота: {count} раз | Плотность: {density:.2f}%\n\n"
+                        keywords_text += f"{i:2d}. ⚪ {word}\n"
+                        keywords_text += f"    Частота: {count} раз | Плотность: {density}\n\n"
                 
                 # Добавляем рекомендации по плотности
                 keywords_text += "\n💡 РЕКОМЕНДАЦИИ ПО ПЛОТНОСТИ:\n"
@@ -6354,13 +6469,19 @@ def main(page: ft.Page):
                 if high_density_words:
                     keywords_text += "🔴 Слишком высокая плотность (>3%):\n"
                     for word, density in high_density_words[:5]:
-                        keywords_text += f"   • {word}: {density:.2f}% - снизьте использование\n"
+                        if isinstance(density, (int, float)):
+                            keywords_text += f"   • {word}: {density:.2f}% - снизьте использование\n"
+                        else:
+                            keywords_text += f"   • {word}: {density} - снизьте использование\n"
                     keywords_text += "\n"
                 
                 if low_density_words:
                     keywords_text += "⚪ Слишком низкая плотность (<0.5%):\n"
                     for word, density in low_density_words[:5]:
-                        keywords_text += f"   • {word}: {density:.2f}% - увеличьте использование\n"
+                        if isinstance(density, (int, float)):
+                            keywords_text += f"   • {word}: {density:.2f}% - увеличьте использование\n"
+                        else:
+                            keywords_text += f"   • {word}: {density} - увеличьте использование\n"
                     keywords_text += "\n"
                 
                 keywords_text += "✅ Оптимальная плотность: 1-2% от общего количества слов\n"
@@ -6488,7 +6609,12 @@ def main(page: ft.Page):
                     for tkw, data in target_analysis.items():
                         declensions_text.append(f"🎯 ЦЕЛЕВОЕ КЛЮЧЕВОЕ СЛОВО: '{tkw}'")
                         declensions_text.append(f"📊 ОБЩАЯ ЧАСТОТА (со склонениями): {data['freq']} раз")
-                        declensions_text.append(f"📈 ПЛОТНОСТЬ: {data['density']:.2%}")
+                        # Безопасное форматирование плотности
+                        density_value = data['density']
+                        if isinstance(density_value, (int, float)):
+                            declensions_text.append(f"📈 ПЛОТНОСТЬ: {density_value:.2%}")
+                        else:
+                            declensions_text.append(f"📈 ПЛОТНОСТЬ: {density_value}")
                         declensions_text.append("")
                         
                         # Показываем найденные склонения
