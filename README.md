@@ -1,6 +1,6 @@
 # SEO Analyzer - Комплексный инструмент для SEO анализа
 
-![SEO Analyzer](https://github.com/H4ckMM3/SEO.png)
+![SEO Analyzer](assets/SEO.png)
 
 ## 📋 Описание
 
@@ -280,6 +280,7 @@ SEO new/
 ---
 
 **SEO Analyzer** - ваш надежный помощник в мире SEO! 🚀
+
 
 
 
