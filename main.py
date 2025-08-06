@@ -569,7 +569,7 @@ def check_robots_summary(site_url, ignore_ssl):
     
     return summary
 
-def get_site_pages(site_url, ignore_ssl, max_pages=1000):
+def get_site_pages(site_url, ignore_ssl, max_pages=15000):
     """Получает список всех страниц на сайте."""
     site_pages = set()
     
@@ -2278,7 +2278,7 @@ def run_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_
 
 
 
-def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_bar: ft.ProgressBar, ignore_ssl: bool, target_keywords: str, max_links: int = 1000):
+def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, progress_bar: ft.ProgressBar, ignore_ssl: bool, target_keywords: str, max_links: int = 15000):
     """Запускает тестирование ссылок без проверки robots и sitemap."""
     if not re.match(r'^https?://', site_url):
         summary_area.value = "❌ Неверный URL\n"
@@ -2336,7 +2336,7 @@ def run_links_test(site_url: str, summary_area: ft.TextField, page: ft.Page, pro
         anti_bot_mode = False
         try:
             start_time = time.time()
-            r = requests.get(site_url, timeout=10, verify=not ignore_ssl, allow_redirects=True)
+            r = requests.get(site_url, timeout=5, verify=not ignore_ssl, allow_redirects=True)
             load_time = time.time() - start_time
             page_size = len(r.content) / 1024
             log_text += f"🔎 HTTP статус: {r.status_code}\n"
@@ -2959,6 +2959,13 @@ def run_multiple_links_test(urls: list, summary_area: ft.TextField, page: ft.Pag
     summary_area.value = f"🔄 Начинаем проверку {total_urls} ссылок...\n"
     page.update()
 
+    # Ограничиваем количество ссылок для оптимизации
+    max_urls_per_batch = 1000  # Максимум 1000 ссылок за раз
+    if total_urls > max_urls_per_batch:
+        summary_area.value += f"⚠️ Ограничиваем проверку до {max_urls_per_batch} ссылок для оптимизации\n"
+        urls = urls[:max_urls_per_batch]
+        total_urls = len(urls)
+
     for url in urls:
         url = url.strip()
         if not url:
@@ -2973,8 +2980,8 @@ def run_multiple_links_test(urls: list, summary_area: ft.TextField, page: ft.Pag
             # Создаем временную область для результатов одной ссылки
             temp_summary = ft.TextField()
             
-            # Запускаем проверку одной ссылки
-            run_links_test(url, temp_summary, page, progress_bar, ignore_ssl, target_keywords, 1000)
+            # Запускаем проверку одной ссылки с увеличенным лимитом
+            run_links_test(url, temp_summary, page, progress_bar, ignore_ssl, target_keywords, 15000)
             
             # Сохраняем результаты
             if hasattr(temp_summary, 'value') and temp_summary.value:
@@ -3331,7 +3338,7 @@ def generate_word_report(data, site_url, report_type='parser'):
     doc.save(report_path)
     return report_path
 
-def crawl_site_without_sitemap(start_url, ignore_ssl, update_callback, done_callback, stop_event, max_threads=10, max_pages=1000):
+def crawl_site_without_sitemap(start_url, ignore_ssl, update_callback, done_callback, stop_event, max_threads=20, max_pages=15000):
     """Рекурсивно обходит все внутренние страницы сайта без использования sitemap."""
     visited = set()
     results = []
@@ -3344,7 +3351,7 @@ def crawl_site_without_sitemap(start_url, ignore_ssl, update_callback, done_call
         """Проверяет редиректы на странице."""
         try:
             # Сначала делаем запрос без редиректов, чтобы увидеть исходный статус
-            r = requests.get(url, timeout=10, verify=not ignore_ssl, allow_redirects=False)
+            r = requests.get(url, timeout=5, verify=not ignore_ssl, allow_redirects=False)
             if r.status_code in [301, 302, 303, 307, 308]:
                 redirect_url = r.headers.get('Location', '')
                 return f"{r.status_code} → {redirect_url}"
@@ -3406,7 +3413,8 @@ def crawl_site_without_sitemap(start_url, ignore_ssl, update_callback, done_call
                 if stop_event.is_set():
                     return
                     
-                r = requests.get(url, timeout=10, verify=not ignore_ssl, allow_redirects=True)
+                # Уменьшенный таймаут для ускорения
+                r = requests.get(url, timeout=5, verify=not ignore_ssl, allow_redirects=True)
                 status = r.status_code
                 soup = BeautifulSoup(r.text, 'html.parser')
                 
@@ -3435,6 +3443,10 @@ def crawl_site_without_sitemap(start_url, ignore_ssl, update_callback, done_call
                         with lock:
                             if link not in queue:
                                 queue.append(link)
+                
+                # Небольшая задержка для снижения нагрузки на сервер
+                time.sleep(0.05)  # 50ms задержка
+                
                 update_callback(len(visited), len(results))
             except Exception as e:
                 results.append({
@@ -4340,29 +4352,48 @@ def analyze_code_content(html_content, url):
 def check_redirects(urls, ignore_ssl, update_callback, done_callback):
     """Проверяет редиректы для списка URL."""
     import requests
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
     results = []
-    for idx, url in enumerate(urls):
+    lock = threading.Lock()
+    
+    def check_single_url(url):
         try:
-            r = requests.get(url, timeout=10, verify=not ignore_ssl, allow_redirects=True)
+            r = requests.get(url, timeout=5, verify=not ignore_ssl, allow_redirects=True)
             chain = [resp.url for resp in r.history] + [r.url] if r.history else [r.url]
             status = r.status_code
             redirected = len(chain) > 1
-            results.append({
+            return {
                 'Исходный URL': url,
                 'Редирект': '✅' if redirected else '❌',
                 'Конечный URL': chain[-1],
                 'HTTP': status,
                 'OK': status in (200, 301, 302)
-            })
+            }
         except Exception as e:
-            results.append({
+            return {
                 'Исходный URL': url,
                 'Редирект': '❌',
                 'Конечный URL': str(e),
                 'HTTP': '-',
                 'OK': False
-            })
-        update_callback(idx + 1, len(urls))
+            }
+    
+    # Используем ThreadPoolExecutor для параллельной обработки
+    max_workers = min(20, len(urls))  # Максимум 20 потоков
+    completed = 0
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_url = {executor.submit(check_single_url, url): url for url in urls}
+        
+        for future in as_completed(future_to_url):
+            result = future.result()
+            with lock:
+                results.append(result)
+                completed += 1
+                update_callback(completed, len(urls))
+    
     done_callback(results)
 
 def main(page: ft.Page):
@@ -6167,7 +6198,7 @@ def main(page: ft.Page):
         try:
             max_pages = int(parser_max_pages.value)
         except ValueError:
-            max_pages = 1000
+            max_pages = 15000
         
         def parser_worker():
             crawl_site_without_sitemap(url, parser_ssl_checkbox.value, parser_update, parser_done, parser_stop_event, max_pages=max_pages)
