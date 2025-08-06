@@ -21,4 +21,5 @@ langchain
 langchain-community
 schedule
 urllib3
-openpyxl 
+openpyxl
+python-docx
