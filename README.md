@@ -1,7 +1,7 @@
 # SEO Analyzer - Комплексный инструмент для SEO анализа
 
 <div align="center">
-  <img src="assets/SEO.png" alt="SEO Analyzer" width="800" height="400">
+  <img src="assets/SEO.png" alt="SEO Analyzer" width="400" height="800">
 </div>
 
 ## 📋 Описание
@@ -385,6 +385,7 @@ SEO new/
 ---
 
 **SEO Analyzer** - ваш надежный помощник в мире SEO! 🚀
+
 
 
 
