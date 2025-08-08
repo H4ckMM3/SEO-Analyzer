@@ -4457,6 +4457,9 @@ def main(page: ft.Page):
     def nav_serp_tracker(e):
         switch_page(8)
     
+    def nav_meta_tags(e):
+        switch_page(9)
+    
     nav_buttons = [
         ft.ElevatedButton(
             "🏠 Главная", 
@@ -4548,6 +4551,16 @@ def main(page: ft.Page):
                 elevation=3
             )
         ),
+        ft.ElevatedButton(
+            "🏷️ Мета-теги", 
+            on_click=nav_meta_tags,
+            style=ft.ButtonStyle(
+                bgcolor="#F2F2F2",
+                color="#394459",
+                shape=ft.RoundedRectangleBorder(radius=10),
+                elevation=3
+            )
+        ),
     ]
     
     # Создаем контейнер для навигации
@@ -4574,6 +4587,7 @@ def main(page: ft.Page):
     competitors_content = ft.Container(visible=False)
     exports_content = ft.Container(visible=False)
     serp_tracker_content = ft.Container(visible=False)
+    meta_tags_content = ft.Container(visible=False)
 
     def switch_page(idx):
         # Скрываем все страницы
@@ -4586,6 +4600,7 @@ def main(page: ft.Page):
         competitors_content.visible = False
         exports_content.visible = False
         serp_tracker_content.visible = False
+        meta_tags_content.visible = False
         
         # Сбрасываем стили всех кнопок
         for btn in nav_buttons:
@@ -4633,6 +4648,8 @@ def main(page: ft.Page):
             refresh_exports_list()
         elif idx == 8:
             serp_tracker_content.visible = True
+        elif idx == 9:
+            meta_tags_content.visible = True
         
         page.update()
 
@@ -5065,7 +5082,96 @@ def main(page: ft.Page):
         serp_chart_container
     ], expand=True)
 
+    # --- Мета-теги UI элементы ---
+    meta_file_picker = ft.FilePicker(
+        on_result=lambda e: meta_file_picker_result(e)
+    )
+    page.overlay.append(meta_file_picker)
+    
+    meta_file_path = ft.Text("Файл не выбран", color="#666666")
+    meta_ssl_checkbox = ft.Checkbox(label="Игнорировать SSL", value=True)
+    
+    meta_run_btn = ft.ElevatedButton(
+        "🔍 Проверить мета-теги", 
+        icon=ft.Icons.PLAY_ARROW,
+        style=ft.ButtonStyle(
+            bgcolor="#F2E307",
+            color="#394459",
+            shape=ft.RoundedRectangleBorder(radius=10),
+            elevation=5
+        )
+    )
+    
+    meta_stop_btn = ft.ElevatedButton(
+        "⏹ Остановить", 
+        icon=ft.Icons.STOP,
+        visible=False,
+        style=ft.ButtonStyle(
+            bgcolor="#FF5722",
+            color="white",
+            shape=ft.RoundedRectangleBorder(radius=10),
+            elevation=5
+        )
+    )
+    
+    meta_progress_bar = ft.ProgressBar(width=600, color="#F2E307", bgcolor="#394459", value=0.0, height=10, border_radius=20)
+    
+    meta_results_table = ft.DataTable(
+        columns=[
+            ft.DataColumn(ft.Text("URL")),
+            ft.DataColumn(ft.Text("Title")),
+            ft.DataColumn(ft.Text("Description")),
+            ft.DataColumn(ft.Text("H1")),
+            ft.DataColumn(ft.Text("Статус"))
+        ],
+        rows=[]
+    )
+    
+    meta_export_btn = ft.ElevatedButton(
+        "📊 Экспорт в Excel",
+        visible=False,
+        style=ft.ButtonStyle(
+            bgcolor="#4CAF50",
+            color="white",
+            shape=ft.RoundedRectangleBorder(radius=10),
+            elevation=3
+        )
+    )
+
+    meta_tags_content.content = ft.Column([
+        ft.Text("🏷️ Проверка мета-тегов", size=24, weight=ft.FontWeight.BOLD),
+        ft.Text("Загрузите Excel файл с данными для проверки мета-тегов. Файл должен содержать столбцы: URL, Title, Description, H1", size=16),
+        ft.Row([
+            ft.ElevatedButton(
+                "📁 Выбрать файл",
+                icon=ft.Icons.FOLDER_OPEN,
+                on_click=lambda _: meta_file_picker.pick_files(
+                    allowed_extensions=["xlsx", "xls"],
+                    dialog_title="Выберите Excel файл с данными"
+                ),
+                style=ft.ButtonStyle(
+                    bgcolor="#2196F3",
+                    color="white",
+                    shape=ft.RoundedRectangleBorder(radius=10),
+                    elevation=3
+                )
+            ),
+            meta_file_path
+        ], spacing=10),
+        ft.Row([meta_ssl_checkbox, meta_run_btn, meta_stop_btn], spacing=10),
+        meta_progress_bar,
+        meta_results_table,
+        ft.Row([meta_export_btn])
+    ], expand=True)
+
     # --- Обработчики кнопок ---
+    def meta_file_picker_result(e):
+        if e.files:
+            file_path = e.files[0].path
+            meta_file_path.value = f"Выбран файл: {os.path.basename(file_path)}"
+            page.data['meta_file_path'] = file_path
+            page.update()
+    
     def show_seo(e):
         summary = page.data.get('seo_summary', 'Нет данных по SEO')
         summary_area.value = summary
@@ -5583,6 +5689,256 @@ def main(page: ft.Page):
         page.snack_bar.open = True
     clear_btn.on_click = clear_summary
 
+    # --- Обработчики для мета-тегов ---
+    def run_meta_tags_check(e):
+        """Запускает проверку мета-тегов."""
+        file_path = page.data.get('meta_file_path')
+        ignore_ssl = meta_ssl_checkbox.value
+        
+        if not file_path:
+            page.snack_bar = ft.SnackBar(content=ft.Text("❌ Выберите Excel файл"))
+            page.snack_bar.open = True
+            page.update()
+            return
+        
+        # Показываем кнопку остановки и скрываем кнопку запуска
+        meta_stop_btn.visible = True
+        meta_run_btn.visible = False
+        page.update()
+        
+        # Создаем событие для остановки
+        page.data['meta_stop_event'] = threading.Event()
+        
+        meta_progress_bar.value = 0.0
+        meta_results_table.rows = []
+        meta_export_btn.visible = False
+        page.update()
+        
+        def update_meta_progress(current, total, message):
+            if total > 0:
+                meta_progress_bar.value = current / total
+            page.update()
+        
+        # Запуск проверки в отдельном потоке
+        threading.Thread(
+            target=lambda: run_meta_tags_worker(file_path, ignore_ssl, update_meta_progress, meta_results_table, meta_export_btn, page, meta_stop_btn, meta_run_btn),
+            daemon=True
+        ).start()
+    
+    def run_meta_tags_worker(file_path, ignore_ssl, update_callback, results_table, export_btn, page_ref, stop_btn, run_btn):
+        """Рабочая функция для проверки мета-тегов."""
+        try:
+            # Читаем Excel файл
+            df = pd.read_excel(file_path)
+            
+            # Проверяем наличие необходимых столбцов
+            required_columns = ['url', 'title', 'description', 'h1']
+            missing_columns = [col for col in required_columns if col.lower() not in [col.lower() for col in df.columns]]
+            
+            if missing_columns:
+                results_table.rows = []
+                page_ref.update()
+                page_ref.snack_bar = ft.SnackBar(content=ft.Text(f"❌ Отсутствуют столбцы: {', '.join(missing_columns)}"))
+                page_ref.snack_bar.open = True
+                page_ref.update()
+                return
+            
+            # Нормализуем названия столбцов
+            df.columns = [col.lower() for col in df.columns]
+            
+            results = []
+            total_urls = len(df)
+            
+            for index, row in df.iterrows():
+                # Проверяем остановку
+                if page_ref.data.get('meta_stop_event', threading.Event()).is_set():
+                    break
+                
+                url = str(row['url']).strip()
+                expected_title = str(row['title']).strip()
+                expected_description = str(row['description']).strip()
+                expected_h1 = str(row['h1']).strip()
+                
+                if not url or url == 'nan':
+                    continue
+                
+                # Проверяем мета-теги
+                try:
+                    response = requests.get(url, timeout=10, verify=not ignore_ssl)
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Получаем реальные мета-теги
+                        real_title = soup.find('title')
+                        real_title_text = real_title.get_text().strip() if real_title else ""
+                        
+                        real_description = soup.find('meta', attrs={'name': 'description'})
+                        real_description_text = real_description.get('content', '').strip() if real_description else ""
+                        
+                        real_h1 = soup.find('h1')
+                        real_h1_text = real_h1.get_text().strip() if real_h1 else ""
+                        
+                        # Сравниваем с ожидаемыми значениями
+                        title_ok = expected_title.lower() == real_title_text.lower()
+                        description_ok = expected_description.lower() == real_description_text.lower()
+                        h1_ok = expected_h1.lower() == real_h1_text.lower()
+                        
+                        # Общий статус
+                        overall_status = "✅ ОК" if (title_ok and description_ok and h1_ok) else "❌ Не ОК"
+                        
+                        # Добавляем результат в таблицу
+                        results_table.rows.append(
+                            ft.DataRow(
+                                cells=[
+                                    ft.DataCell(ft.Text(url)),
+                                    ft.DataCell(ft.Text(real_title_text)),
+                                    ft.DataCell(ft.Text(real_description_text)),
+                                    ft.DataCell(ft.Text(real_h1_text)),
+                                    ft.DataCell(ft.Text(overall_status))
+                                ]
+                            )
+                        )
+                        
+                        results.append({
+                            'url': url,
+                            'expected_title': expected_title,
+                            'real_title': real_title_text,
+                            'expected_description': expected_description,
+                            'real_description': real_description_text,
+                            'expected_h1': expected_h1,
+                            'real_h1': real_h1_text,
+                            'title_ok': title_ok,
+                            'description_ok': description_ok,
+                            'h1_ok': h1_ok,
+                            'overall_status': overall_status
+                        })
+                        
+                    else:
+                        results_table.rows.append(
+                            ft.DataRow(
+                                cells=[
+                                    ft.DataCell(ft.Text(url)),
+                                    ft.DataCell(ft.Text("Ошибка загрузки")),
+                                    ft.DataCell(ft.Text("Ошибка загрузки")),
+                                    ft.DataCell(ft.Text("Ошибка загрузки")),
+                                    ft.DataCell(ft.Text("❌ Ошибка"))
+                                ]
+                            )
+                        )
+                        
+                        results.append({
+                            'url': url,
+                            'expected_title': expected_title,
+                            'real_title': "Ошибка загрузки",
+                            'expected_description': expected_description,
+                            'real_description': "Ошибка загрузки",
+                            'expected_h1': expected_h1,
+                            'real_h1': "Ошибка загрузки",
+                            'title_ok': False,
+                            'description_ok': False,
+                            'h1_ok': False,
+                            'overall_status': "❌ Ошибка"
+                        })
+                        
+                except Exception as e:
+                    results_table.rows.append(
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Text(url)),
+                                ft.DataCell(ft.Text(f"Ошибка: {str(e)}")),
+                                ft.DataCell(ft.Text(f"Ошибка: {str(e)}")),
+                                ft.DataCell(ft.Text(f"Ошибка: {str(e)}")),
+                                ft.DataCell(ft.Text("❌ Ошибка"))
+                            ]
+                        )
+                    )
+                    
+                    results.append({
+                        'url': url,
+                        'expected_title': expected_title,
+                        'real_title': f"Ошибка: {str(e)}",
+                        'expected_description': expected_description,
+                        'real_description': f"Ошибка: {str(e)}",
+                        'expected_h1': expected_h1,
+                        'real_h1': f"Ошибка: {str(e)}",
+                        'title_ok': False,
+                        'description_ok': False,
+                        'h1_ok': False,
+                        'overall_status': "❌ Ошибка"
+                    })
+                
+                # Обновляем прогресс
+                update_callback(index + 1, total_urls, f"Проверено {index + 1} из {total_urls} URL")
+            
+            # Сохраняем результаты для экспорта
+            page_ref.data['meta_tags_results'] = results
+            
+            # Показываем кнопку экспорта
+            export_btn.visible = True
+            page_ref.update()
+            
+        except Exception as e:
+            results_table.rows = []
+            page_ref.update()
+            page_ref.snack_bar = ft.SnackBar(content=ft.Text(f"❌ Ошибка: {str(e)}"))
+            page_ref.snack_bar.open = True
+            page_ref.update()
+        finally:
+            # Возвращаем кнопки в исходное состояние
+            stop_btn.visible = False
+            run_btn.visible = True
+            page_ref.update()
+    
+    def stop_meta_tags_check(e):
+        """Останавливает проверку мета-тегов."""
+        page.data['meta_stop_event'] = threading.Event()
+        page.data['meta_stop_event'].set()
+        
+        meta_stop_btn.visible = False
+        meta_run_btn.visible = True
+        page.update()
+    
+    def export_meta_tags_results(e):
+        """Экспортирует результаты проверки мета-тегов в Excel."""
+        results = page.data.get('meta_tags_results', [])
+        
+        if not results:
+            page.snack_bar = ft.SnackBar(content=ft.Text("❌ Нет данных для экспорта"))
+            page.snack_bar.open = True
+            page.update()
+            return
+        
+        try:
+            # Создаем DataFrame для экспорта
+            export_data = []
+            for result in results:
+                export_data.append({
+                    'URL': result['url'],
+                    'Title': result['real_title'],
+                    'Description': result['real_description'],
+                    'H1': result['real_h1'],
+                    'Статус': result['overall_status']
+                })
+            
+            df_export = pd.DataFrame(export_data)
+            
+            # Генерируем имя файла
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"meta_tags_report_{timestamp}.xlsx"
+            filepath = os.path.join(REPORT_DIR, filename)
+            
+            # Экспортируем в Excel
+            df_export.to_excel(filepath, index=False)
+            
+            page.snack_bar = ft.SnackBar(content=ft.Text(f"✅ Результаты экспортированы в {filename}"))
+            page.snack_bar.open = True
+            page.update()
+            
+        except Exception as e:
+            page.snack_bar = ft.SnackBar(content=ft.Text(f"❌ Ошибка экспорта: {str(e)}"))
+            page.snack_bar.open = True
+            page.update()
+
     # --- Обработчики для SERP Tracker ---
     def run_serp_tracking(e):
         """Запускает трекинг позиций или анализ сайта."""
@@ -5994,6 +6350,11 @@ def main(page: ft.Page):
     serp_run_btn.on_click = run_serp_tracking
     serp_stop_btn.on_click = stop_serp_tracking
     serp_export_btn.on_click = export_serp_results
+
+    # Привязка обработчиков для мета-тегов
+    meta_run_btn.on_click = run_meta_tags_check
+    meta_stop_btn.on_click = stop_meta_tags_check
+    meta_export_btn.on_click = export_meta_tags_results
 
     # --- Парсер всех страниц ---
     parser_url_input = ft.TextField(
@@ -7611,7 +7972,8 @@ def main(page: ft.Page):
                 redirects_content,
                 competitors_content,
                 exports_content,
-                serp_tracker_content
+                serp_tracker_content,
+                meta_tags_content
             ], expand=True)
         ], expand=True)
     )
@@ -7778,4 +8140,4 @@ def process_sitemap_recursively(sitemap_url, ignore_ssl, visited_sitemaps=None, 
     return result
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.app(target=main,  assets_dir="assets")
